@@ -39,29 +39,36 @@ export function assertSameOrigin(req: NextRequest): void {
   }
 }
 
-interface Options<S extends z.ZodTypeAny | undefined> {
+interface Options<S extends z.ZodTypeAny | undefined, Q extends z.ZodTypeAny | undefined> {
   /** undefined = public. [] = any signed-in user. Otherwise one of the listed roles. */
   roles?: UserRole[];
   body?: S;
+  /** Validated against the URL query string. */
+  query?: Q;
   rateLimit?: { name: string; limit: number; windowMs: number };
 }
 
-interface Ctx<S extends z.ZodTypeAny | undefined> {
+interface Ctx<S extends z.ZodTypeAny | undefined, Q extends z.ZodTypeAny | undefined> {
   req: NextRequest;
   user: PublicUser;
   body: S extends z.ZodTypeAny ? z.infer<S> : undefined;
+  query: Q extends z.ZodTypeAny ? z.infer<Q> : undefined;
+  params: Record<string, string>;
   ip: string;
 }
 
 /**
  * The single entry point for route handlers:
- * origin check → rate limit → authenticate → authorise → validate → run → map errors.
+ * origin check -> rate limit -> authenticate -> authorise -> validate -> run -> map errors.
  */
-export function route<S extends z.ZodTypeAny | undefined = undefined>(
-  opts: Options<S>,
-  handler: (ctx: Ctx<S>) => Promise<NextResponse>,
-) {
-  return async (req: NextRequest): Promise<NextResponse> => {
+export function route<
+  S extends z.ZodTypeAny | undefined = undefined,
+  Q extends z.ZodTypeAny | undefined = undefined,
+>(opts: Options<S, Q>, handler: (ctx: Ctx<S, Q>) => Promise<NextResponse>) {
+  return async (
+    req: NextRequest,
+    routeCtx: { params: Promise<Record<string, string>> },
+  ): Promise<NextResponse> => {
     try {
       assertSameOrigin(req);
       const ip = clientIp(req);
@@ -74,14 +81,30 @@ export function route<S extends z.ZodTypeAny | undefined = undefined>(
         if (opts.roles.length > 0 && !opts.roles.includes(user.role)) throw forbidden();
       }
 
+      let query: unknown;
+      if (opts.query) query = opts.query.parse(Object.fromEntries(req.nextUrl.searchParams));
+
       let body: unknown;
       if (opts.body) {
-        const raw = await req.json().catch(() => {
-          throw new AppError("VALIDATION_ERROR", "Request body must be valid JSON.");
-        });
+        const text = await req.text();
+        let raw: unknown = {};
+        if (text.trim()) {
+          try {
+            raw = JSON.parse(text);
+          } catch {
+            throw new AppError("VALIDATION_ERROR", "Request body must be valid JSON.");
+          }
+        }
         body = opts.body.parse(raw);
       }
-      return await handler({ req, user: user as PublicUser, body: body as Ctx<S>["body"], ip });
+      return await handler({
+        req,
+        user: user as PublicUser,
+        body: body as Ctx<S, Q>["body"],
+        query: query as Ctx<S, Q>["query"],
+        params: (await routeCtx?.params) ?? {},
+        ip,
+      });
     } catch (e) {
       return errorResponse(e);
     }

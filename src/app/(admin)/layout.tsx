@@ -3,7 +3,7 @@ import { requirePageRole } from "@/modules/auth/current-user";
 
 const nav: NavItem[] = [
   { label: "Overview", href: "/admin", ready: true },
-  { label: "Facility approvals", href: "#", ready: false, phase: "Phase 2" },
+  { label: "Facilities", href: "/admin/facilities", ready: true },
   { label: "Users", href: "#", ready: false, phase: "Phase 7" },
   { label: "Transactions", href: "#", ready: false, phase: "Phase 5" },
   { label: "Settings", href: "#", ready: false, phase: "Phase 7" },

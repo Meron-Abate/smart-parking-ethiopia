@@ -2,12 +2,11 @@ import { AppShell, type NavItem } from "@/components/app-shell";
 import { requirePageRole } from "@/modules/auth/current-user";
 
 const nav: NavItem[] = [
-  { label: "Overview", href: "/facility", ready: true },
-  { label: "Inventory", href: "#", ready: false, phase: "Phase 2" },
+  { label: "My facilities", href: "/facility", ready: true },
+  { label: "Add facility", href: "/facility/new", ready: true },
   { label: "Reservations", href: "#", ready: false, phase: "Phase 4" },
   { label: "Active sessions", href: "#", ready: false, phase: "Phase 6" },
   { label: "Staff", href: "#", ready: false, phase: "Phase 7" },
-  { label: "Pricing", href: "#", ready: false, phase: "Phase 2" },
   { label: "Reports", href: "#", ready: false, phase: "Phase 7" },
 ];
 

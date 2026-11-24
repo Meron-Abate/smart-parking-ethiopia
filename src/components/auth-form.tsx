@@ -85,7 +85,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
       <p className="text-sm text-muted-foreground">
         {mode === "login" ? (
           <>
-            New here? <Link className="underline" href="/register">Create an account</Link>
+            New here? <Link className="underline" href="/register">Create an account</Link>. Run a parking facility?{" "}
+            <Link className="underline" href="/register-facility">List your parking</Link>
           </>
         ) : (
           <>

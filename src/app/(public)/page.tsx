@@ -16,6 +16,7 @@ export default async function HomePage() {
             <>
               <Link className="underline" href="/login">{t("nav.login")}</Link>
               <Link className="underline" href="/register">{t("nav.register")}</Link>
+              <Link className="underline" href="/register-facility">List your parking</Link>
             </>
           )}
         </nav>
