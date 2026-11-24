@@ -1,0 +1,21 @@
+{
+  "brand": "Smart Parking Ethiopia",
+  "home.headline": "Where are you going?",
+  "home.sub": "Find and reserve parking before you arrive.",
+  "home.search.label": "Destination",
+  "home.search.placeholder": "Building, mall, hotel, landmark or neighbourhood",
+  "home.search.pending": "Destination search and parking discovery are built in Phase 3. This field is intentionally inactive until then.",
+  "nav.login": "Sign in",
+  "nav.register": "Create account",
+  "nav.logout": "Sign out",
+  "auth.login.title": "Sign in",
+  "auth.register.title": "Create your account",
+  "auth.fullName": "Full name",
+  "auth.email": "Email",
+  "auth.phone": "Phone (optional if email given)",
+  "auth.identifier": "Email or phone",
+  "auth.password": "Password",
+  "auth.submit.login": "Sign in",
+  "auth.submit.register": "Create account",
+  "phase.placeholder": "This section is planned for {phase}. Nothing here is functional yet."
+}

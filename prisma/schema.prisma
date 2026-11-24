@@ -1,0 +1,765 @@
+// Smart Parking Ethiopia — full domain schema (designed in Phase 1).
+// Conventions:
+//  * Money = integer santim (1 ETB = 100). Never floats.
+//  * All timestamps are timestamptz (UTC). Local display = Africa/Addis_Ababa.
+//  * PostGIS column + GiST index + exclusion constraints live in raw SQL migrations
+//    (prisma/migrations/*_postgis_and_constraints) because Prisma cannot express them.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Extensions (postgis, btree_gist, pg_trgm) are created in the first migration's raw SQL,
+// not declared here: the postgis Docker image pre-installs extra extensions and Prisma would
+// otherwise report drift and demand a schema reset.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Enums ─────────────────────────
+
+enum UserRole {
+  DRIVER
+  ATTENDANT
+  FACILITY_ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+}
+
+enum FacilityStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum FacilityType {
+  HOTEL
+  MALL
+  OFFICE
+  COMMERCIAL
+  RESTAURANT
+  HOSPITAL
+  UNIVERSITY
+  PRIVATE_OPERATOR
+  INDIVIDUAL
+}
+
+enum InventoryModel {
+  INDIVIDUAL_SPACES
+  CAPACITY_BASED
+}
+
+enum VehicleType {
+  MOTORCYCLE
+  SEDAN
+  SUV
+  MINIBUS
+  TRUCK
+}
+
+enum SpaceStatus {
+  AVAILABLE
+  UNAVAILABLE
+  MAINTENANCE
+}
+
+enum StaffRole {
+  FACILITY_ADMIN
+  MANAGER
+  ATTENDANT
+}
+
+enum ReservationStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  ACTIVE
+  EXTENSION_PENDING
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  NO_SHOW
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum AllocationType {
+  SPACE
+  CAPACITY
+}
+
+enum ExtensionStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  REJECTED
+  EXPIRED
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+}
+
+enum PaymentPurpose {
+  DEPOSIT
+  EXTENSION
+  FINAL_BALANCE
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  AMOUNT_MISMATCH
+  REFUND_REQUIRED
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum TransactionType {
+  DEPOSIT
+  EXTENSION
+  FINAL_BALANCE
+  REFUND
+  PLATFORM_COMMISSION
+  FORFEITURE
+  NO_SHOW_FEE
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum QRStatus {
+  ACTIVE
+  USED
+  REVOKED
+  EXPIRED
+}
+
+enum PricingUnit {
+  HOURLY
+  DAILY
+}
+
+enum RoundingMode {
+  NONE
+  UP_TO_HOUR
+  UP_TO_30_MIN
+  UP_TO_15_MIN
+}
+
+// ───────────────────── Identity & access ─────────────────────
+
+model User {
+  id               String     @id @default(cuid())
+  email            String?    @unique
+  phone            String?    @unique
+  passwordHash     String
+  role             UserRole   @default(DRIVER)
+  status           UserStatus @default(ACTIVE)
+  emailVerifiedAt  DateTime?  @db.Timestamptz
+  phoneVerifiedAt  DateTime?  @db.Timestamptz
+  failedLoginCount Int        @default(0)
+  lockedUntil      DateTime?  @db.Timestamptz
+  lastLoginAt      DateTime?  @db.Timestamptz
+  createdAt        DateTime   @default(now()) @db.Timestamptz
+  updatedAt        DateTime   @updatedAt @db.Timestamptz
+
+  profile       UserProfile?
+  vehicles      Vehicle[]
+  memberships   OrganizationMember[]
+  staffAt       FacilityStaff[]
+  reservations  Reservation[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  tickets       SupportTicket[]
+  reviews       Review[]
+
+  @@index([role, status])
+}
+
+model UserProfile {
+  userId    String   @id
+  fullName  String
+  language  String   @default("en")
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Vehicle {
+  id          String      @id @default(cuid())
+  userId      String
+  plateNumber String
+  type        VehicleType @default(SEDAN)
+  make        String?
+  model       String?
+  color       String?
+  isDefault   Boolean     @default(false)
+  createdAt   DateTime    @default(now()) @db.Timestamptz
+  deletedAt   DateTime?   @db.Timestamptz
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@unique([userId, plateNumber])
+  @@index([userId])
+}
+
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  legalName String?
+  taxId     String?
+  email     String?
+  phone     String?
+  status    OrganizationStatus @default(PENDING_APPROVAL)
+  createdAt DateTime           @default(now()) @db.Timestamptz
+  updatedAt DateTime           @updatedAt @db.Timestamptz
+
+  members    OrganizationMember[]
+  facilities ParkingFacility[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           StaffRole    @default(FACILITY_ADMIN)
+  createdAt      DateTime     @default(now()) @db.Timestamptz
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+// Facility-scoped staff (attendants, managers). Org admins reach every facility of their org.
+model FacilityStaff {
+  id         String          @id @default(cuid())
+  facilityId String
+  userId     String
+  role       StaffRole       @default(ATTENDANT)
+  active     Boolean         @default(true)
+  createdAt  DateTime        @default(now()) @db.Timestamptz
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, userId])
+  @@index([userId])
+}
+
+// ───────────────────── Facilities & inventory ─────────────────────
+
+model ParkingFacility {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  type           FacilityType
+  status         FacilityStatus @default(PENDING_APPROVAL)
+  rejectionReason String?
+  inventoryModel InventoryModel @default(INDIVIDUAL_SPACES)
+  address        String
+  subCity        String?
+  neighborhood   String?
+  // Source of truth for coordinates. `location` is derived by a DB trigger.
+  latitude       Float
+  longitude      Float
+  location       Unsupported("geography(Point,4326)")?
+  contactPhone   String?
+  contactEmail   String?
+  // Capacity used when inventoryModel = CAPACITY_BASED (and as a cached total otherwise)
+  totalCapacity  Int            @default(0)
+  isCovered      Boolean        @default(false)
+  isIndoor       Boolean        @default(false)
+  is24Hours      Boolean        @default(false)
+  timezone       String         @default("Africa/Addis_Ababa")
+  commissionBps  Int?           // null = platform default
+  createdAt      DateTime       @default(now()) @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  staff        FacilityStaff[]
+  images       FacilityImage[]
+  hours        FacilityOperatingHours[]
+  features     FacilityFeature[]
+  floors       ParkingFloor[]
+  zones        ParkingZone[]
+  spaces       ParkingSpace[]
+  pricingRules PricingRule[]
+  reservationPolicy ReservationPolicy?
+  cancellationPolicy CancellationPolicy?
+  reservations Reservation[]
+  maintenance  MaintenanceRecord[]
+  reviews      Review[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([neighborhood])
+}
+
+model FacilityImage {
+  id         String          @id @default(cuid())
+  facilityId String
+  url        String
+  alt        String?
+  sortOrder  Int             @default(0)
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId])
+}
+
+// dayOfWeek: 0 = Sunday … 6 = Saturday, times are LOCAL (Africa/Addis_Ababa) minutes after midnight.
+model FacilityOperatingHours {
+  id           String          @id @default(cuid())
+  facilityId   String
+  dayOfWeek    Int
+  opensMinute  Int             // 0..1439
+  closesMinute Int             // 1..1440 (1440 = midnight end of day)
+  facility     ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, dayOfWeek])
+}
+
+model FacilityFeature {
+  id         String          @id @default(cuid())
+  facilityId String
+  key        String          // e.g. CCTV, GUARD, LIGHTING, EV_CHARGING, CAR_WASH
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, key])
+}
+
+model ParkingFloor {
+  id         String          @id @default(cuid())
+  facilityId String
+  name       String
+  level      Int             @default(0)
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  zones      ParkingZone[]
+
+  @@unique([facilityId, name])
+}
+
+model ParkingZone {
+  id         String          @id @default(cuid())
+  facilityId String
+  floorId    String
+  name       String
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  floor      ParkingFloor    @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  spaces     ParkingSpace[]
+
+  @@unique([floorId, name])
+  @@index([facilityId])
+}
+
+model ParkingSpace {
+  id         String          @id @default(cuid())
+  facilityId String
+  zoneId     String
+  label      String          // e.g. A1
+  vehicleTypes VehicleType[] // compatible vehicle categories
+  isCovered  Boolean         @default(false)
+  status     SpaceStatus     @default(AVAILABLE)
+  createdAt  DateTime        @default(now()) @db.Timestamptz
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  zone       ParkingZone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+  maintenance  MaintenanceRecord[]
+  sessions     ParkingSession[]
+
+  @@unique([facilityId, label])
+  @@index([zoneId])
+}
+
+// Blocks inventory for a time window. spaceId null = capacity block (N units).
+model MaintenanceRecord {
+  id         String           @id @default(cuid())
+  facilityId String
+  spaceId    String?
+  units      Int              @default(1)
+  startAt    DateTime         @db.Timestamptz
+  endAt      DateTime         @db.Timestamptz
+  reason     String?
+  createdAt  DateTime         @default(now()) @db.Timestamptz
+  facility   ParkingFacility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  space      ParkingSpace?    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, startAt, endAt])
+}
+
+// ───────────────────── Pricing & policies ─────────────────────
+
+model PricingRule {
+  id             String       @id @default(cuid())
+  facilityId     String
+  name           String       @default("Standard")
+  vehicleType    VehicleType? // null = all
+  unit           PricingUnit  @default(HOURLY)
+  firstUnitCents Int          // price of first unit (hour/day)
+  additionalUnitCents Int     // price of every following unit
+  minimumChargeCents  Int     @default(0)
+  dailyCapCents  Int?         // optional "max per 24h"
+  rounding       RoundingMode @default(UP_TO_HOUR)
+  // Future: weekend / time-band rules
+  dayOfWeekMask  Int?         // bitmask, null = every day
+  startMinute    Int?
+  endMinute      Int?
+  priority       Int          @default(0)
+  active         Boolean      @default(true)
+  facility       ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, active])
+}
+
+model ReservationPolicy {
+  facilityId             String  @id
+  depositPercent         Int     @default(20)  // validated against platform min/max
+  graceMinutes           Int     @default(15)
+  minAdvanceMinutes      Int     @default(0)
+  maxAdvanceDays         Int     @default(14)
+  minDurationMinutes     Int     @default(30)
+  maxDurationMinutes     Int     @default(1440)
+  allowExtensions        Boolean @default(true)
+  allowGraceExtension    Boolean @default(false)
+  depositRefundableOnEarlyExit Boolean @default(false)
+  extensionGraceMinutes  Int     @default(15)
+  facility ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+}
+
+model CancellationPolicy {
+  facilityId           String @id
+  freeCancelBeforeMinutes Int @default(60)
+  refundPercentBefore  Int    @default(100) // of deposit, when cancelling before the deadline
+  refundPercentAfter   Int    @default(0)
+  noShowFeeCents       Int    @default(0)
+  forfeitDepositOnNoShow Boolean @default(true)
+  facility ParkingFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────── Reservations & sessions ─────────────────────
+
+model Reservation {
+  id          String            @id @default(cuid())
+  reference   String            @unique // human-friendly booking ref (e.g. SP-7K3QX9)
+  userId      String
+  facilityId  String
+  vehicleId   String
+  allocation  AllocationType
+  spaceId     String?           // set when allocation = SPACE
+  vehicleType VehicleType
+  status      ReservationStatus @default(PENDING_PAYMENT)
+
+  // Reserved window (UTC)
+  startAt     DateTime          @db.Timestamptz
+  endAt       DateTime          @db.Timestamptz
+  holdExpiresAt DateTime?       @db.Timestamptz
+  // True while this row occupies inventory. Maintained ONLY by the state machine.
+  // The exclusion constraint / capacity check keys off this flag.
+  blocksInventory Boolean       @default(false)
+
+  // Destination the driver searched for (analytics + review context)
+  destinationName String?
+  destinationLat  Float?
+  destinationLng  Float?
+
+  // Money snapshot (server-calculated, immutable once confirmed except via extension/checkout)
+  estimatedFeeCents Int
+  depositCents      Int
+  finalFeeCents     Int?
+  graceMinutes      Int
+  policySnapshot    Json            // pricing rule + cancellation + reservation policy at booking time
+
+  cancelledAt   DateTime?         @db.Timestamptz
+  cancelReason  String?
+  createdAt     DateTime          @default(now()) @db.Timestamptz
+  updatedAt     DateTime          @updatedAt @db.Timestamptz
+
+  user       User            @relation(fields: [userId], references: [id])
+  facility   ParkingFacility @relation(fields: [facilityId], references: [id])
+  vehicle    Vehicle         @relation(fields: [vehicleId], references: [id])
+  space      ParkingSpace?   @relation(fields: [spaceId], references: [id])
+  extensions ReservationExtension[]
+  session    ParkingSession?
+  qrTokens   QRCodeToken[]
+  payments   Payment[]
+  transactions FinancialTransaction[]
+  review     Review?
+
+  @@index([userId, status])
+  @@index([facilityId, startAt, endAt])
+  @@index([status, holdExpiresAt])
+  @@index([spaceId, startAt, endAt])
+}
+
+model ReservationExtension {
+  id            String          @id @default(cuid())
+  reservationId String
+  previousEndAt DateTime        @db.Timestamptz
+  newEndAt      DateTime        @db.Timestamptz
+  additionalFeeCents Int
+  status        ExtensionStatus @default(PENDING_PAYMENT)
+  holdExpiresAt DateTime?       @db.Timestamptz
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+  reservation   Reservation     @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  payments      Payment[]
+
+  @@index([reservationId])
+}
+
+model ParkingSession {
+  id            String        @id @default(cuid())
+  reservationId String        @unique
+  facilityId    String
+  spaceId       String?
+  plateNumber   String        // as verified by attendant
+  status        SessionStatus @default(ACTIVE)
+  checkInAt     DateTime      @db.Timestamptz
+  checkOutAt    DateTime?     @db.Timestamptz
+  checkedInById String?
+  checkedOutById String?
+  actualMinutes Int?
+  finalFeeCents Int?
+  receiptNumber String?       @unique
+  createdAt     DateTime      @default(now()) @db.Timestamptz
+  reservation   Reservation   @relation(fields: [reservationId], references: [id])
+  space         ParkingSpace? @relation(fields: [spaceId], references: [id])
+
+  @@index([facilityId, status])
+}
+
+// Only a hash of the token is stored; the raw token exists only in the QR image.
+model QRCodeToken {
+  id            String      @id @default(cuid())
+  reservationId String
+  tokenHash     String      @unique
+  status        QRStatus    @default(ACTIVE)
+  expiresAt     DateTime    @db.Timestamptz
+  usedAt        DateTime?   @db.Timestamptz
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  scans         QRScanEvent[]
+
+  @@index([reservationId])
+}
+
+model QRScanEvent {
+  id        String      @id @default(cuid())
+  tokenId   String?
+  scannedById String?
+  facilityId  String?
+  outcome   String      // OK | INVALID | EXPIRED | USED | WRONG_FACILITY | BAD_STATUS
+  createdAt DateTime    @default(now()) @db.Timestamptz
+  token     QRCodeToken? @relation(fields: [tokenId], references: [id])
+
+  @@index([tokenId])
+}
+
+// ───────────────────── Payments ─────────────────────
+
+model PaymentProvider {
+  id        String    @id // "mock" | "chapa" | "telebirr"
+  name      String
+  enabled   Boolean   @default(false)
+  isLive    Boolean   @default(false) // false for mock — never presented as live
+  payments  Payment[]
+}
+
+model Payment {
+  id             String         @id @default(cuid())
+  reference      String         @unique // our tx_ref sent to the provider
+  idempotencyKey String         @unique
+  reservationId  String
+  extensionId    String?
+  providerId     String
+  purpose        PaymentPurpose
+  status         PaymentStatus  @default(INITIATED)
+  amountCents    Int
+  currency       String         @default("ETB")
+  providerReference String?
+  checkoutUrl    String?
+  failureReason  String?
+  paidAt         DateTime?      @db.Timestamptz
+  expiresAt      DateTime?      @db.Timestamptz
+  createdAt      DateTime       @default(now()) @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @db.Timestamptz
+  reservation    Reservation    @relation(fields: [reservationId], references: [id])
+  extension      ReservationExtension? @relation(fields: [extensionId], references: [id])
+  provider       PaymentProvider @relation(fields: [providerId], references: [id])
+  refunds        Refund[]
+  webhooks       PaymentWebhook[]
+
+  @@index([reservationId])
+  @@index([status, createdAt])
+}
+
+model Refund {
+  id          String       @id @default(cuid())
+  reference   String       @unique
+  paymentId   String
+  amountCents Int
+  status      RefundStatus @default(PENDING)
+  reason      String?
+  providerReference String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz
+  processedAt DateTime?    @db.Timestamptz
+  payment     Payment      @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+}
+
+model PaymentWebhook {
+  id              String    @id @default(cuid())
+  provider        String
+  providerEventId String
+  paymentId       String?
+  signatureValid  Boolean
+  payload         Json
+  processedAt     DateTime? @db.Timestamptz
+  error           String?
+  receivedAt      DateTime  @default(now()) @db.Timestamptz
+  payment         Payment?  @relation(fields: [paymentId], references: [id])
+
+  @@unique([provider, providerEventId]) // dedupe duplicate callbacks
+}
+
+// Append-only ledger. Never updated or deleted.
+model FinancialTransaction {
+  id            String          @id @default(cuid())
+  reference     String          @unique
+  reservationId String
+  facilityId    String
+  type          TransactionType
+  amountCents   Int             // signed: refunds are negative
+  paymentId     String?
+  refundId      String?
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+  reservation   Reservation     @relation(fields: [reservationId], references: [id])
+
+  @@index([facilityId, createdAt])
+  @@index([reservationId])
+}
+
+// ───────────────────── Platform ─────────────────────
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  channel   NotificationChannel @default(IN_APP)
+  event     String
+  title     String
+  body      String
+  data      Json?
+  status    NotificationStatus  @default(PENDING)
+  createdAt DateTime            @default(now()) @db.Timestamptz
+  sentAt    DateTime?           @db.Timestamptz
+  readAt    DateTime?           @db.Timestamptz
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([status, channel])
+}
+
+model Review {
+  id            String          @id @default(cuid())
+  reservationId String          @unique
+  userId        String
+  facilityId    String
+  rating        Int
+  comment       String?
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+  reservation   Reservation     @relation(fields: [reservationId], references: [id])
+  user          User            @relation(fields: [userId], references: [id])
+  facility      ParkingFacility @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorRole  UserRole?
+  action     String   // e.g. auth.login, reservation.transition, facility.approve
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now()) @db.Timestamptz
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @db.Timestamptz
+}
+
+model SupportTicket {
+  id            String       @id @default(cuid())
+  userId        String
+  reservationId String?
+  subject       String
+  body          String
+  status        TicketStatus @default(OPEN)
+  createdAt     DateTime     @default(now()) @db.Timestamptz
+  updatedAt     DateTime     @updatedAt @db.Timestamptz
+  user          User         @relation(fields: [userId], references: [id])
+
+  @@index([status])
+}
+
+// Curated destinations for Addis Ababa (fallback when OSM business-name coverage is thin).
+model Landmark {
+  id           String   @id @default(cuid())
+  name         String
+  alias        String[]
+  category     String?
+  address      String?
+  neighborhood String?
+  latitude     Float
+  longitude    Float
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  @@index([name])
+}
