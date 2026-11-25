@@ -56,7 +56,7 @@ export default async function FacilityDetail({ params }: { params: Promise<{ id:
             )}
           </>
         )}
-        {f.status === "APPROVED" && <p>Approved. Drivers will be able to discover this facility once destination search launches (Phase 3).</p>}
+        {f.status === "APPROVED" && <p>Approved. Drivers can now find this facility when they search for a destination within 5 km of it. Reservations open in Phase 4.</p>}
         {f.status === "REJECTED" && <p>Rejected: {f.rejectionReason}. Edit the details below and save to resubmit for review.</p>}
         {f.status === "SUSPENDED" && <p>Suspended by the platform{f.rejectionReason ? `: ${f.rejectionReason}` : ""}. Contact support to reinstate.</p>}
       </Section>

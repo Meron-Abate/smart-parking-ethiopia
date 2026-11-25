@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/modules/auth/current-user";
 import { HOME_BY_ROLE } from "@/modules/rbac/policy";
+import { HomeSearch } from "@/components/discovery/home-search";
 import { t } from "@/i18n";
 
 export default async function HomePage() {
@@ -24,17 +25,11 @@ export default async function HomePage() {
       <main className="mx-auto max-w-2xl px-4 pt-16">
         <h1 className="text-3xl font-semibold md:text-4xl">{t("home.headline")}</h1>
         <p className="mt-2 text-lg text-muted-foreground">{t("home.sub")}</p>
-        {/* Destination-first entry point. Wired to geocoding + PostGIS discovery in Phase 3. */}
+        {/* Destination-first entry point: pick a place, then see parking around THAT place. */}
         <div className="mt-8">
           <label htmlFor="destination" className="text-sm font-medium">{t("home.search.label")}</label>
-          <input
-            id="destination"
-            disabled
-            aria-describedby="destination-note"
-            placeholder={t("home.search.placeholder")}
-            className="mt-1.5 w-full min-h-12 rounded-md border border-border bg-muted px-3 text-base"
-          />
-          <p id="destination-note" className="mt-2 text-sm text-muted-foreground">{t("home.search.pending")}</p>
+          <div className="mt-1.5"><HomeSearch /></div>
+          <p className="mt-2 text-sm text-muted-foreground">{t("home.search.hint")}</p>
         </div>
       </main>
     </div>

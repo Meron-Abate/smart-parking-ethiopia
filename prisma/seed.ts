@@ -5,6 +5,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { config } from "dotenv";
+import { loadLandmarks } from "./landmarks";
 
 config({ quiet: true });
 if (process.env.NODE_ENV === "production") throw new Error("Refusing to seed in production");
@@ -68,6 +69,7 @@ async function main() {
         longitude: f.lng,
         totalCapacity: f.cap,
         inventoryModel: "CAPACITY_BASED",
+        is24Hours: true,
         reservationPolicy: { create: {} },
         cancellationPolicy: { create: {} },
         pricingRules: { create: { firstUnitCents: 3000, additionalUnitCents: 2500, minimumChargeCents: 3000 } },
@@ -77,6 +79,7 @@ async function main() {
       await db.facilityStaff.create({ data: { facilityId: created.id, userId: attendant.id, role: "ATTENDANT" } });
     }
   }
+  await loadLandmarks(db);
   console.log("Seeded. Dev password for all users:", PASSWORD);
 }
 

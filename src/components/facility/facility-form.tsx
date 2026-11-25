@@ -5,11 +5,16 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { Checkbox, FormMessage, Select } from "@/components/ui/misc";
+import dynamic from "next/dynamic";
 import { api, ApiError } from "@/lib/api-client";
+import { DestinationSearch } from "@/components/discovery/destination-search";
+
+const LocationPicker = dynamic(() => import("./location-picker"), { ssr: false, loading: () => <div className="h-72 rounded-md border border-border bg-muted" /> });
 
 const TYPES = ["HOTEL", "MALL", "OFFICE", "COMMERCIAL", "RESTAURANT", "HOSPITAL", "UNIVERSITY", "PRIVATE_OPERATOR", "INDIVIDUAL"];
 const FEATURES = ["CCTV", "SECURITY_GUARD", "LIGHTING", "EV_CHARGING", "CAR_WASH", "ATTENDANT"];
-const label = (s: string) => s.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+const ACRONYMS: Record<string, string> = { CCTV: "CCTV", EV_CHARGING: "EV charging" };
+const label = (s: string) => ACRONYMS[s] ?? s.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
 export interface FacilityFormValues {
   id?: string;
@@ -99,7 +104,16 @@ export function FacilityForm({ initial = emptyFacility }: { initial?: FacilityFo
           <Input id="longitude" inputMode="decimal" value={v.longitude} onChange={(e) => set("longitude", e.target.value)} required />
         </Field>
       </div>
-      <p className="text-sm text-muted-foreground">Pick-on-map location selection arrives with the map integration in Phase 3. Until then enter coordinates (right-click a place in OpenStreetMap or Google Maps to copy them).</p>
+      <div className="space-y-2">
+        <label htmlFor="loc-search" className="text-sm font-medium">Find the spot on the map (optional)</label>
+        <DestinationSearch id="loc-search" onSelect={(p) => setV((x) => ({ ...x, latitude: String(p.latitude), longitude: String(p.longitude) }))} />
+        <LocationPicker
+          latitude={v.latitude.trim() === "" || Number.isNaN(Number(v.latitude)) ? null : Number(v.latitude)}
+          longitude={v.longitude.trim() === "" || Number.isNaN(Number(v.longitude)) ? null : Number(v.longitude)}
+          onChange={(lat, lng) => setV((x) => ({ ...x, latitude: String(lat), longitude: String(lng) }))}
+        />
+        <p className="text-sm text-muted-foreground">Click the map or drag the pin to set the exact entrance. You can also type coordinates above.</p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id="contactPhone" label="Contact phone (optional)"><Input id="contactPhone" type="tel" value={v.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} /></Field>
         <Field id="contactEmail" label="Contact email (optional)" error={fe("contactEmail")}><Input id="contactEmail" type="email" value={v.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} /></Field>

@@ -4,7 +4,7 @@
   "home.sub": "Find and reserve parking before you arrive.",
   "home.search.label": "Destination",
   "home.search.placeholder": "Building, mall, hotel, landmark or neighbourhood",
-  "home.search.pending": "Destination search and parking discovery are built in Phase 3. This field is intentionally inactive until then.",
+  "home.search.hint": "We search around the place you are going, not where you are now. Pick a destination to see parking near it.",
   "nav.login": "Sign in",
   "nav.register": "Create account",
   "nav.logout": "Sign out",

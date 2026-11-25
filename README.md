@@ -11,10 +11,10 @@ Architecture, ER diagram, lifecycle and payment diagrams, assumptions: [docs/ARC
 |-------|-------|
 | 1 Foundation (scaffold, schema, auth, RBAC, layouts, Docker) | **done** (see limitations below) |
 | 2 Facility management (operator sign-up, facilities, inventory, pricing, hours, policies, admin review) | **done** |
-| 3 Destination discovery | not started |
+| 3 Destination discovery (autocomplete, radius search, availability, map) | **done** (see Phase 3 notes) |
 | 4–9 | not started |
 
-The driver homepage's destination field is intentionally **inactive** until Phase 3. All role dashboards are placeholders that say so.
+Driver dashboard pages other than **Search parking** are placeholders until their phase. Unbuilt sidebar items are deliberately not links.
 
 ## Quick start
 
@@ -23,7 +23,8 @@ cp .env.example .env            # then set AUTH_SECRET (>= 32 chars)
 npm install
 npm run db:up                   # PostgreSQL 16 + PostGIS on localhost:5433
 npm run db:deploy               # apply migrations
-npm run db:seed                 # dev-only fake data
+npm run db:seed                 # dev-only fake data (+ landmark reference data)
+npm run db:seed:demo            # dev-only: 16 demo facilities around Addis landmarks (see Phase 3 notes)
 npm run dev                     # http://localhost:3000
 npm test                        # unit + integration (integration needs the DB)
 ```
@@ -59,3 +60,19 @@ Seed facilities use approximate coordinates and are marked "(demo)".
 * The `Roles`/`Permissions` tables from the spec are replaced by a role enum + membership tables (see ARCHITECTURE §0.1 C3).
 * Dockerfile is a dev image only; production image is Phase 9.
 * OpenAPI docs: Phase 7.
+
+## Phase 3 notes: destination discovery
+
+* Driver flow: home page (or `/search`) → type a destination → pick it → parking within 500 m / 1 / 2 / 5 km **of the destination**, for the chosen arrival time, stay length and vehicle. The driver's GPS is never used (`discoverQuery` has no such input; a test enforces it).
+* API (public, rate-limited): `GET /api/destinations/search?q=` and `GET /api/parking/discover?lat&lng&radius&arrivalAt&durationMinutes&vehicleType&covered&indoor&open24&features&maxPriceCents&showUnavailable&sort`.
+* Availability counts, for the whole requested window, spaces not held by a reservation (`blocksInventory`) or maintenance. Capacity-based facilities subtract every overlapping booking (conservative; Phase 4 enforces the exact rule under a lock). Facilities are also marked CLOSED (outside opening hours, Addis time), NOT_BOOKABLE (stay length / advance-booking policy) or NO_PRICE.
+* Prices are **server-side estimates** (`src/modules/pricing/calculate.ts`, integer santim). Weekday/time-band price rules are not evaluated yet.
+* **Replaceable seams** (`src/modules/geo`): `GeocodingProvider` (default: seeded landmark table + approved facility names via pg_trgm; no external calls) and `RoutingProvider` (default: straight-line distance x 1.3, labelled an estimate). Swap by implementing the interface in `src/modules/geo/types.ts` and changing `src/modules/geo/index.ts`.
+* Landmarks (`prisma/landmarks.ts`, 41 places) have **approximate** coordinates (~300 m) and must be verified before launch. `npm run db:seed:landmarks` loads them in any environment.
+* Map: Leaflet + OpenStreetMap tiles (fine for development; production needs a tile provider agreement). The facility form now has a click-to-set-location map.
+* The "Reserve" button on results is deliberately disabled until Phase 4.
+
+### Trying it with your own data
+
+1. **Bulk demo data:** `npm run db:seed:demo` (after `npm run db:seed`). Remove it again with `npm run db:seed:demo -- --remove`. Then search for Meskel Square, Bole Airport, Edna Mall, Piassa, Kazanchis… The set includes nearly-full, full, closed-by-hours, covered, EV-charging and 24h examples.
+2. **Through the UI:** sign in as `owner@bole-atlas-parking.test` → Add facility (pick the spot on the map) → add spaces, pricing and hours → sign in as `admin@parking.test` → approve at `/admin/facilities` → search for a nearby landmark as any visitor.
