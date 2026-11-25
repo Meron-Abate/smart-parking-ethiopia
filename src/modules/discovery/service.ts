@@ -2,7 +2,9 @@ import { db } from "@/platform/db";
 import { AppError } from "@/platform/errors";
 import { router } from "@/modules/geo";
 import { estimateFeeCents, selectRule } from "@/modules/pricing/calculate";
-import { hoursLabel, isOpenForWindow } from "./hours";
+import { capacityIntervals, peakLoad } from "@/modules/reservations/availability";
+import { hoursLabel } from "./hours";
+import { checkBookingRules } from "./rules";
 import type { DiscoverInput } from "./schemas";
 
 export type AvailabilityStatus = "AVAILABLE" | "LIMITED" | "FULL" | "CLOSED" | "NOT_BOOKABLE" | "NO_PRICE";
@@ -93,29 +95,19 @@ export async function discover(input: DiscoverInput, now: Date = new Date()): Pr
   if (ids.length === 0) return { facilities: [], meta: { ...meta, total: 0, hiddenUnavailable: 0 } };
 
   // 2. Free units per facility for the whole window (conflicting reservations + maintenance excluded).
-  const [spaceRows, capacityRows, rows] = await Promise.all([
+  const [spaceRows, capIntervals, rows] = await Promise.all([
     db.$queryRaw<{ facilityId: string; free: bigint }[]>`
       SELECT s."facilityId", count(*) AS free
       FROM "ParkingSpace" s
       WHERE s."facilityId" = ANY(${ids}::text[])
         AND s.status = 'AVAILABLE'
         AND ${input.vehicleType}::"VehicleType" = ANY(s."vehicleTypes")
-        AND NOT EXISTS (SELECT 1 FROM "Reservation" r WHERE r."spaceId" = s.id AND r."blocksInventory"
+        AND NOT EXISTS (SELECT 1 FROM "Reservation" r WHERE r."spaceId" = s.id AND r."blocksInventory" AND NOT (r.status = 'PENDING_PAYMENT' AND r."holdExpiresAt" <= ${now}::timestamptz)
                         AND tstzrange(r."startAt", r."endAt", '[)') && tstzrange(${start}::timestamptz, ${end}::timestamptz, '[)'))
         AND NOT EXISTS (SELECT 1 FROM "MaintenanceRecord" m WHERE m."spaceId" = s.id
                         AND tstzrange(m."startAt", m."endAt", '[)') && tstzrange(${start}::timestamptz, ${end}::timestamptz, '[)'))
       GROUP BY s."facilityId"`,
-    // Capacity-based: capacity minus ALL overlapping holds/bookings and capacity-level maintenance.
-    // Conservative (counts every overlap, not just the peak); Phase 4 enforces the exact rule under a lock.
-    db.$queryRaw<{ facilityId: string; free: bigint }[]>`
-      SELECT f.id AS "facilityId",
-             f."totalCapacity"
-               - (SELECT count(*) FROM "Reservation" r WHERE r."facilityId" = f.id AND r.allocation = 'CAPACITY' AND r."blocksInventory"
-                  AND tstzrange(r."startAt", r."endAt", '[)') && tstzrange(${start}::timestamptz, ${end}::timestamptz, '[)'))
-               - (SELECT COALESCE(sum(m.units), 0) FROM "MaintenanceRecord" m WHERE m."facilityId" = f.id AND m."spaceId" IS NULL
-                  AND tstzrange(m."startAt", m."endAt", '[)') && tstzrange(${start}::timestamptz, ${end}::timestamptz, '[)')) AS free
-      FROM "ParkingFacility" f
-      WHERE f.id = ANY(${ids}::text[]) AND f."inventoryModel" = 'CAPACITY_BASED'`,
+    capacityIntervals(db, ids, start, end, now),
     db.parkingFacility.findMany({
       where: { id: { in: ids } },
       include: { hours: true, features: true, pricingRules: true, reservationPolicy: true },
@@ -123,35 +115,23 @@ export async function discover(input: DiscoverInput, now: Date = new Date()): Pr
   ]);
   const free = new Map<string, number>();
   for (const r of spaceRows) free.set(r.facilityId, Number(r.free));
-  for (const r of capacityRows) free.set(r.facilityId, Math.max(0, Number(r.free)));
+  for (const f of rows) if (f.inventoryModel === "CAPACITY_BASED") free.set(f.id, Math.max(0, f.totalCapacity - peakLoad(capIntervals.get(f.id) ?? [], start, end)));
 
   // 3. Evaluate each candidate.
   const out: DiscoveredFacility[] = [];
   for (const f of rows) {
     const distanceMeters = Math.round(distanceById.get(f.id) ?? 0);
     const policy = f.reservationPolicy;
+    const check = checkBookingRules(f, input.vehicleType, start, input.durationMinutes, now);
     const rule = selectRule(f.pricingRules, input.vehicleType);
-    const lead = (start.getTime() - now.getTime()) / 60_000;
 
     let status: AvailabilityStatus;
     let reason: string | null = null;
     let availableUnits: number | null = null;
 
-    if (!isOpenForWindow(f.is24Hours, f.hours, start, end)) {
-      status = "CLOSED";
-      reason = "Closed for part or all of your stay.";
-    } else if (policy && (input.durationMinutes < policy.minDurationMinutes || input.durationMinutes > policy.maxDurationMinutes)) {
-      status = "NOT_BOOKABLE";
-      reason = `Stay must be ${policy.minDurationMinutes}–${policy.maxDurationMinutes} minutes here.`;
-    } else if (policy && lead < policy.minAdvanceMinutes) {
-      status = "NOT_BOOKABLE";
-      reason = `Must be booked at least ${policy.minAdvanceMinutes} minutes ahead.`;
-    } else if (policy && lead > policy.maxAdvanceDays * 1440) {
-      status = "NOT_BOOKABLE";
-      reason = `Can be booked at most ${policy.maxAdvanceDays} days ahead.`;
-    } else if (!rule) {
-      status = "NO_PRICE";
-      reason = "No price is set for this vehicle type.";
+    if (!check.ok) {
+      status = check.status;
+      reason = check.reason;
     } else {
       availableUnits = free.get(f.id) ?? 0;
       const limitedAt = Math.max(3, Math.ceil(f.totalCapacity * 0.15));

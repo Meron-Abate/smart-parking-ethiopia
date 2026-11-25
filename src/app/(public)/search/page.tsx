@@ -30,7 +30,7 @@ export default async function SearchPage() {
       <main>
         <h1 className="sr-only">Find parking near your destination</h1>
         <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading…</p>}>
-          <SearchClient defaultArrivalIso={defaultArrivalIso} />
+          <SearchClient defaultArrivalIso={defaultArrivalIso} role={user?.role ?? null} />
         </Suspense>
       </main>
     </div>

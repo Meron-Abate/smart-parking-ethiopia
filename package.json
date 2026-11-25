@@ -16,7 +16,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:up": "docker compose up -d db",
     "db:seed:landmarks": "tsx prisma/seed-landmarks.ts",
-    "db:seed:demo": "tsx prisma/seed-demo-discovery.ts"
+    "db:seed:demo": "tsx prisma/seed-demo-discovery.ts",
+    "job:sweep": "tsx prisma/job-sweep.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

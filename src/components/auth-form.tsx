@@ -45,7 +45,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
       setServerError(json.error?.message ?? "Something went wrong.");
       return;
     }
-    router.push(HOME_BY_ROLE[json.data.role as keyof typeof HOME_BY_ROLE]);
+    // Return to where the driver was heading (e.g. a reservation), but only to a same-site path.
+    const next = new URLSearchParams(window.location.search).get("next");
+    const safeNext = next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : null;
+    router.push(json.data.role === "DRIVER" && safeNext ? safeNext : HOME_BY_ROLE[json.data.role as keyof typeof HOME_BY_ROLE]);
     router.refresh();
   }
 

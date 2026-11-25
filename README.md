@@ -12,9 +12,10 @@ Architecture, ER diagram, lifecycle and payment diagrams, assumptions: [docs/ARC
 | 1 Foundation (scaffold, schema, auth, RBAC, layouts, Docker) | **done** (see limitations below) |
 | 2 Facility management (operator sign-up, facilities, inventory, pricing, hours, policies, admin review) | **done** |
 | 3 Destination discovery (autocomplete, radius search, availability, map) | **done** (see Phase 3 notes) |
-| 4–9 | not started |
+| 4 Reservations (holds, no-double-booking, cancel, extend, expiry/no-show sweep, vehicles) | **done** (payment is simulated in dev only; see Phase 4 notes) |
+| 5–9 | not started |
 
-Driver dashboard pages other than **Search parking** are placeholders until their phase. Unbuilt sidebar items are deliberately not links.
+Driver pages for active parking, payments and notifications are placeholders until their phase. Unbuilt sidebar items are deliberately not links.
 
 ## Quick start
 
@@ -24,6 +25,7 @@ npm install
 npm run db:up                   # PostgreSQL 16 + PostGIS on localhost:5433
 npm run db:deploy               # apply migrations
 npm run db:seed                 # dev-only fake data (+ landmark reference data)
+npm run job:sweep               # release expired holds / mark no-shows (schedule every minute in production)
 npm run db:seed:demo            # dev-only: 16 demo facilities around Addis landmarks (see Phase 3 notes)
 npm run dev                     # http://localhost:3000
 npm test                        # unit + integration (integration needs the DB)
@@ -76,3 +78,16 @@ Seed facilities use approximate coordinates and are marked "(demo)".
 
 1. **Bulk demo data:** `npm run db:seed:demo` (after `npm run db:seed`). Remove it again with `npm run db:seed:demo -- --remove`. Then search for Meskel Square, Bole Airport, Edna Mall, Piassa, Kazanchis… The set includes nearly-full, full, closed-by-hours, covered, EV-charging and 24h examples.
 2. **Through the UI:** sign in as `owner@bole-atlas-parking.test` → Add facility (pick the spot on the map) → add spaces, pricing and hours → sign in as `admin@parking.test` → approve at `/admin/facilities` → search for a nearby landmark as any visitor.
+
+## Phase 4 notes: reservations
+
+* Driver flow: search → **Reserve** → pick vehicle → `POST /api/reservations` creates a **hold** (`PENDING_PAYMENT`, inventory blocked, `hold.minutes` platform setting, default 10) → pay the deposit → `CONFIRMED`. Also: cancel (refund per the policy snapshot), extend, vehicles CRUD (`/vehicles`), `/bookings`, `/bookings/:id`.
+* API (all DRIVER-only, CSRF + rate-limited): `GET/POST /api/vehicles`, `DELETE /api/vehicles/:id`, `GET /api/reservations/quote`, `GET/POST /api/reservations`, `GET /api/reservations/:id`, `POST /api/reservations/:id/{cancel,extend}`.
+* **No double booking.** Numbered spaces: the database exclusion constraint `Reservation_no_space_overlap` is the guard (loser of a race moves to the next free space or gets a clean 409). Capacity-based: a per-facility Postgres advisory lock serialises the check, which uses **peak concurrent load** over the requested window (`src/modules/reservations/availability.ts`). Tests fire 8–10 simultaneous requests and assert the exact number of winners; removing the lock makes the capacity test fail (verified).
+* **Price and deposit are computed on the server** from the facility's pricing rule and are snapshotted (with the cancellation and reservation policy) on the reservation; input cannot carry price, status or owner fields. Extensions are priced from the snapshot.
+* **Lifecycle** lives in `src/modules/reservations/transitions.ts` (confirm / expire / cancel / noShow). A reservation can be extended while confirmed/active: the extra time is held immediately and reverted by the sweeper if the extension is not paid in time.
+* **Expiry and no-shows** are done by `sweep()` (`npm run job:sweep`): unpaid holds -> EXPIRED, unpaid extensions reverted, confirmed bookings not arrived within the grace period -> NO_SHOW. It also runs lazily before reservation reads/writes, and availability ignores expired holds even before the sweep. **There is no Redis/BullMQ worker yet** (no Redis in this stack): in production schedule `npm run job:sweep` every minute (or add a queue in Phase 9). Deposit forfeiture on no-show is recorded as policy only; money moves in Phase 5.
+* **Payment is not implemented.** The "Pay deposit" button is disabled and says so. In `next dev` (NODE_ENV != production) a clearly labelled **Simulate payment** button/endpoint flips the status to CONFIRMED so the rest of the flow can be tried; it moves no money and returns 404 in production builds. Phase 5 replaces it with the payment abstraction + mock provider.
+* Cancellation returns `refundDueCents` and audits it; nothing is refunded until Phase 5.
+* Limits: 3 unpaid holds per driver; a vehicle cannot hold two overlapping reservations; 10 vehicles per driver.
+* Not in Phase 4: choosing a specific numbered space in the UI (the API accepts `spaceId`; the UI auto-assigns), attendant check-in/QR (Phase 6), notifications (Phase 8).

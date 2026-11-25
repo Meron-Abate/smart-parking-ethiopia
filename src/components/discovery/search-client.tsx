@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { DestinationSearch, type PlaceOption } from "./destination-search";
@@ -42,7 +43,7 @@ async function fetchDiscover(qs: string): Promise<DiscoverResult> {
   return { facilities: json.data, meta: json.meta };
 }
 
-export function SearchClient({ defaultArrivalIso }: { defaultArrivalIso: string }) {
+export function SearchClient({ defaultArrivalIso, role }: { defaultArrivalIso: string; role: string | null }) {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
@@ -96,6 +97,13 @@ export function SearchClient({ defaultArrivalIso }: { defaultArrivalIso: string 
 
   const onDestination = (p: PlaceOption) => update({ lat: String(p.latitude), lng: String(p.longitude), name: p.name });
   const dest = lat && lng ? { latitude: Number(lat), longitude: Number(lng), name } : null;
+
+  const reserveHref = (facilityId: string) => {
+    const q = new URLSearchParams({ facilityId, startAt: arrivalIso, durationMinutes: String(duration) });
+    if (name) q.set("destName", name);
+    if (lat && lng) { q.set("lat", lat); q.set("lng", lng); }
+    return "/reserve?" + q.toString();
+  };
 
   const toggleFeature = (k: string) => update({ features: (features.includes(k) ? features.filter((x) => x !== k) : [...features, k]).join(",") });
 
@@ -200,7 +208,7 @@ export function SearchClient({ defaultArrivalIso }: { defaultArrivalIso: string 
                 </li>
               )}
               {data?.facilities.map((f) => (
-                <FacilityCard key={f.id} f={f} selected={f.id === selected} onSelect={() => pick(f.id, false)} register={(el) => { if (el) cards.current.set(f.id, el); else cards.current.delete(f.id); }} />
+                <FacilityCard key={f.id} f={f} role={role} reserveHref={reserveHref(f.id)} selected={f.id === selected} onSelect={() => pick(f.id, false)} register={(el) => { if (el) cards.current.set(f.id, el); else cards.current.delete(f.id); }} />
               ))}
             </ul>
             <div className={`h-[70vh] lg:sticky lg:top-4 lg:h-[calc(100vh-14rem)] ${view === "list" ? "hidden lg:block" : ""}`}>
@@ -216,7 +224,7 @@ export function SearchClient({ defaultArrivalIso }: { defaultArrivalIso: string 
   );
 }
 
-function FacilityCard({ f, selected, onSelect, register }: { f: DiscoveredFacility; selected: boolean; onSelect: () => void; register: (el: HTMLElement | null) => void }) {
+function FacilityCard({ f, role, reserveHref, selected, onSelect, register }: { f: DiscoveredFacility; role: string | null; reserveHref: string; selected: boolean; onSelect: () => void; register: (el: HTMLElement | null) => void }) {
   const s = STATUS_TEXT[f.status]!;
   return (
     <li ref={register} className={`rounded-lg border bg-card p-4 ${selected ? "border-primary ring-2 ring-primary" : "border-border"} ${f.bookable ? "" : "opacity-80"}`}>
@@ -241,8 +249,15 @@ function FacilityCard({ f, selected, onSelect, register }: { f: DiscoveredFacili
         </p>
       </button>
       <div className="mt-3">
-        {/* Reservations are built in Phase 4. Shown disabled, never as a working button. */}
-        <Button type="button" disabled className="w-full" title="Reservations open in Phase 4">Reserve (coming in Phase 4)</Button>
+        {!f.bookable ? (
+          <Button type="button" disabled className="w-full">Not available for your time</Button>
+        ) : role === "DRIVER" ? (
+          <Link href={reserveHref} className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Reserve</Link>
+        ) : role === null ? (
+          <Link href={"/login?next=" + encodeURIComponent(reserveHref)} className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Sign in to reserve</Link>
+        ) : (
+          <Button type="button" disabled className="w-full" title="Only driver accounts can reserve">Reserve (driver accounts only)</Button>
+        )}
       </div>
     </li>
   );

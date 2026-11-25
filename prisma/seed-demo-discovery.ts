@@ -96,11 +96,15 @@ async function main() {
   }
 
   await loadLandmarks(db);
-  const driver = await db.user.findUnique({ where: { email: "driver@parking.test" } });
-  if (!driver) throw new Error("Run `npm run db:seed` first (creates driver@parking.test).");
+  // Occupancy is booked by a separate placeholder account (cannot sign in), so the demo driver's own vehicle stays free to book with.
+  const occupant = await db.user.upsert({
+    where: { email: "demo-occupancy@parking.invalid" },
+    update: {},
+    create: { email: "demo-occupancy@parking.invalid", passwordHash: "!", role: "DRIVER", status: "ACTIVE" },
+  });
   const vehicle =
-    (await db.vehicle.findFirst({ where: { userId: driver.id, deletedAt: null } })) ??
-    (await db.vehicle.create({ data: { userId: driver.id, plateNumber: "AA-12345", type: "SEDAN", isDefault: true } }));
+    (await db.vehicle.findFirst({ where: { userId: occupant.id, deletedAt: null } })) ??
+    (await db.vehicle.create({ data: { userId: occupant.id, plateNumber: "DEMO-OCCUPANT", type: "SEDAN", isDefault: true } }));
 
   const horizon = new Date(Date.now() + 3 * 86_400_000);
   const from = new Date(Date.now() - 3_600_000);
@@ -108,8 +112,8 @@ async function main() {
   const book = (facilityId: string, spaceId: string | null) =>
     db.reservation.create({
       data: {
-        reference: `DEMO-${Date.now().toString(36)}-${ref++}`, userId: driver.id, facilityId, vehicleId: vehicle.id, vehicleType: "SEDAN",
-        allocation: spaceId ? "SPACE" : "CAPACITY", spaceId, status: "CONFIRMED", startAt: from, endAt: horizon, blocksInventory: true,
+        reference: `DEMO-${Date.now().toString(36)}-${ref++}`, userId: occupant.id, facilityId, vehicleId: vehicle.id, vehicleType: "SEDAN",
+        allocation: spaceId ? "SPACE" : "CAPACITY", spaceId, status: "ACTIVE", startAt: from, endAt: horizon, blocksInventory: true,
         estimatedFeeCents: 0, depositCents: 0, graceMinutes: 15, policySnapshot: { demo: true },
       },
     });
